@@ -681,18 +681,350 @@ ontouchend="this.style.transform=''; this.style.borderColor='rgba(231, 76, 60, 0
 </div>
 
 <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-    import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-    import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
-    const firebaseConfig={apiKey:"AIzaSyBCmR4_oLkO-Vh4W0D2YgeemXepRt89wjc",authDomain:"pianokid-evo.firebaseapp.com",projectId:"pianokid-evo",storageBucket:"pianokid-evo.firebasestorage.app",messagingSenderId:"744883971321",appId:"1:744883971321:web:a29d02fce39137e6316e28"};
-    const app=initializeApp(firebaseConfig),auth=getAuth(app),db=getFirestore(app),googleProvider=new GoogleAuthProvider();
-    let isSignUpMode=false;
-    window.toggleAuthMode=()=>{isSignUpMode=!isSignUpMode;document.getElementById('auth-title').innerText=isSignUpMode?"Inscription 🚀":"Connexion 🎹";document.getElementById('auth-submit-btn').innerText=isSignUpMode?"Créer un compte":"Se connecter";};
-    window.handleAuth=async()=>{const e=document.getElementById('auth-email').value,p=document.getElementById('auth-password').value;try{if(isSignUpMode){const r=await createUserWithEmailAndPassword(auth,e,p);await createFirestoreUser(r.user);}else{await signInWithEmailAndPassword(auth,e,p);}document.getElementById('auth-modal').style.display='none';}catch(a){alert("Erreur : "+a.message);}};
-    window.handleGoogleAuth=async()=>{try{const r=await signInWithPopup(auth,googleProvider);await createFirestoreUser(r.user);document.getElementById('auth-modal').style.display='none';document.getElementById('partition-modal').style.display='none';}catch(e){alert("Erreur Google : "+e.message);}};
-    window.handleLogout=async()=>{try{await signOut(auth);location.reload();}catch(e){console.error(e);}};
-    async function createFirestoreUser(u){const r=doc(db,"users",u.uid),s=await getDoc(r);if(!s.exists())await setDoc(r,{email:u.email,isPro:!1,createdAt:new Date,username:u.displayName||u.email.split('@')[0]});}
-    onAuthStateChanged(auth,async(u)=>{const d=document.getElementById('display-username');if(u){if(d)d.innerText=u.displayName||u.email.split('@')[0];const r=doc(db,"users",u.uid),s=await getDoc(r);if(s.exists())window.isPro=s.data().isPro;}else{if(d)d.innerText="Invité";window.isPro=!1;}if(typeof switchTab==='function')switchTab('cours');});
+    // ==========================================
+    // FIREBASE AUTHENTIFICATION - VERSION CORRIGÉE
+    // ==========================================
+    
+ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import { getAuth } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+    import { getFirestore } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+        apiKey: "AIzaSyDasGJTF_jN4Z6RLi4ys7yzMPJ_ipSrIW0",
+        authDomain: "pianokid-evo.firebaseapp.com",
+        projectId: "pianokid-evo",
+        storageBucket: "pianokid-evo.firebasestorage.app",
+        messagingSenderId: "744883971321",
+        appId: "1:744883971321:web:77908590a4a5a766316e28",
+        measurementId: "G-NWK5BD8H5Z"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    // 🔴 CORRECTION #1: Persistence locale (garde la connexion après refresh)
+    setPersistence(auth, browserLocalPersistence).catch(console.error);
+
+    // ==========================================
+    // 3. VARIABLES D'ÉTAT
+    // ==========================================
+    
+    let isSignUpMode = false;
+
+    // ==========================================
+    // 4. FONCTIONS UTILITAIRES
+    // ==========================================
+
+    function showError(message) {
+        console.error("🔥 Firebase Error:", message);
+        alert(message);
+    }
+
+    // 🔴 CORRECTION #2: Met à jour l'UI après connexion réussie
+    async function updateUIAfterLogin(user) {
+        console.log("✅ Connecté:", user.email);
+        
+        // Ferme le modal auth
+        const authModal = document.getElementById('auth-modal');
+        if (authModal) authModal.style.display = 'none';
+        
+        // Met à jour l'affichage du profil
+        if (typeof updateProfileDisplay === 'function') {
+            updateProfileDisplay();
+        }
+        if (typeof updateMenuProfileDisplay === 'function') {
+            updateMenuProfileDisplay();
+        }
+        
+        // Rafraîchit les niveaux (pour enlever les cadenas)
+        if (typeof switchTab === 'function') {
+            switchTab(currentTabType || 'cours');
+        }
+    }
+
+    // ==========================================
+    // 5. FONCTIONS D'AUTHENTIFICATION
+    // ==========================================
+
+    // Basculer entre Connexion et Inscription
+    window.toggleAuthMode = () => {
+        isSignUpMode = !isSignUpMode;
+        const title = document.getElementById('auth-title');
+        const btn = document.getElementById('auth-submit-btn');
+        
+        if (title) title.innerText = isSignUpMode ? "Inscription 🚀" : "Connexion 🎹";
+        if (btn) btn.innerText = isSignUpMode ? "Créer un compte" : "Se connecter";
+    };
+
+    // 🔴 CORRECTION #3: Email/Mot de passe avec meilleure gestion d'erreurs
+    window.handleAuth = async () => {
+        const emailInput = document.getElementById('auth-email');
+        const passInput = document.getElementById('auth-password');
+        
+        const email = emailInput?.value?.trim();
+        const pass = passInput?.value;
+
+        if (!email || !pass) {
+            showError("Merci de remplir tous les champs");
+            return;
+        }
+
+        // Validation email basique
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (!emailRegex.test(email)) {
+            showError("Email invalide");
+            return;
+        }
+
+        if (pass.length < 6) {
+            showError("Le mot de passe doit faire au moins 6 caractères");
+            return;
+        }
+
+        try {
+            let userCredential;
+            
+            if (isSignUpMode) {
+                console.log("📝 Création compte:", email);
+                userCredential = await createUserWithEmailAndPassword(auth, email, pass);
+                
+                // Crée le profil dans Firestore
+                await setDoc(doc(db, "users", userCredential.user.uid), {
+                    email: email,
+                    username: email.split('@')[0],
+                    createdAt: new Date(),
+                    isPro: false,
+                    completedLevels: []
+                });
+                
+                alert("Compte créé ! Bienvenue 🎹");
+            } else {
+                console.log("🔑 Connexion:", email);
+                userCredential = await signInWithEmailAndPassword(auth, email, pass);
+            }
+
+            // 🔴 CORRECTION #4: Met à jour l'UI immédiatement
+            await updateUIAfterLogin(userCredential.user);
+
+        } catch (error) {
+            console.error("Erreur auth:", error);
+            let msg = "Erreur d'authentification";
+            
+            // Messages d'erreur détaillés
+            switch(error.code) {
+                case 'auth/wrong-password':
+                case 'auth/invalid-credential':
+                    msg = "Email ou mot de passe incorrect";
+                    break;
+                case 'auth/user-not-found':
+                    msg = "Aucun compte trouvé avec cet email";
+                    break;
+                case 'auth/email-already-in-use':
+                    msg = "Cet email est déjà utilisé";
+                    break;
+                case 'auth/invalid-email':
+                    msg = "Email invalide";
+                    break;
+                case 'auth/weak-password':
+                    msg = "Mot de passe trop faible (min 6 caractères)";
+                    break;
+                case 'auth/network-request-failed':
+                    msg = "Problème de connexion internet";
+                    break;
+                case 'auth/too-many-requests':
+                    msg = "Trop de tentatives. Réessayez plus tard.";
+                    break;
+                default:
+                    msg = error.message;
+            }
+            
+            showError(msg);
+        }
+    };
+
+    // 🔴 CORRECTION #5: Google Auth avec gestion des popups bloqués
+    window.handleGoogleAuth = async () => {
+        try {
+            console.log("🔵 Tentative connexion Google...");
+            
+            // Configure le provider pour forcer la sélection de compte
+            googleProvider.setCustomParameters({
+                'prompt': 'select_account'
+            });
+            
+            const result = await signInWithPopup(auth, googleProvider);
+            console.log("✅ Google auth réussi:", result.user.email);
+            
+            // Crée/met à jour le profil dans Firestore
+            const userRef = doc(db, "users", result.user.uid);
+            const userSnap = await getDoc(userRef);
+            
+            if (!userSnap.exists()) {
+                await setDoc(userRef, {
+                    email: result.user.email,
+                    username: result.user.displayName || result.user.email.split('@')[0],
+                    photoURL: result.user.photoURL,
+                    createdAt: new Date(),
+                    isPro: false,
+                    completedLevels: []
+                });
+            }
+            
+            await updateUIAfterLogin(result.user);
+            
+        } catch (error) {
+            console.error("❌ Erreur Google Auth:", error);
+            let msg = "Erreur Google Sign-In";
+            
+            switch(error.code) {
+                case 'auth/popup-blocked':
+                    msg = "Le popup a été bloqué par le navigateur. Autorisez les popups pour ce site ou utilisez la connexion par email.";
+                    break;
+                case 'auth/popup-closed-by-user':
+                    msg = "Connexion annulée (fenêtre fermée)";
+                    break;
+                case 'auth/cancelled-popup-request':
+                    msg = "Une autre connexion est en cours...";
+                    break;
+                case 'auth/unauthorized-domain':
+                    msg = "Ce domaine n'est pas autorisé. Ajoutez-le dans Firebase Console > Auth > Settings > Authorized Domains";
+                    break;
+                case 'auth/network-request-failed':
+                    msg = "Problème de connexion internet";
+                    break;
+                default:
+                    msg = error.message;
+            }
+            
+            showError(msg);
+        }
+    };
+
+    // Déconnexion
+    window.handleLogout = async () => {
+        try {
+            await signOut(auth);
+            console.log("👋 Déconnexion réussie");
+            
+            // Reset les variables globales
+            window.isPro = false;
+            window.userCompletedLevels = [];
+            
+            // Met à jour l'UI
+            if (typeof updateProfileDisplay === 'function') {
+                updateProfileDisplay();
+            }
+            if (typeof updateMenuProfileDisplay === 'function') {
+                updateMenuProfileDisplay();
+            }
+            
+            // Recharge la page pour reset l'état
+            location.reload();
+            
+        } catch (error) {
+            console.error("Erreur déconnexion:", error);
+            showError("Erreur lors de la déconnexion");
+        }
+    };
+
+    // Passer PRO
+    window.unlockPro = async () => {
+        if (!auth.currentUser) {
+            alert("Connectez-vous d'abord !");
+            document.getElementById('pricing-modal').style.display = 'none';
+            document.getElementById('auth-modal').style.display = 'flex';
+            return;
+        }
+        
+        try {
+            const userRef = doc(db, "users", auth.currentUser.uid);
+            await updateDoc(userRef, { isPro: true });
+            window.isPro = true;
+            alert("Félicitations ! Vous êtes maintenant PRO ! 🚀");
+            document.getElementById('pricing-modal').style.display = 'none';
+            
+            if (typeof switchTab === 'function') {
+                switchTab(currentTabType || 'cours');
+            }
+        } catch (e) {
+            showError("Erreur : " + e.message);
+        }
+    };
+
+    // Sauvegarder un niveau réussi
+    window.saveLevelToFirebase = async (levelTitle) => {
+        if (!auth.currentUser) {
+            console.log("⚠️ Pas d'utilisateur connecté, sauvegarde locale uniquement");
+            return;
+        }
+        
+        try {
+            const userRef = doc(db, "users", auth.currentUser.uid);
+            await updateDoc(userRef, {
+                completedLevels: arrayUnion(levelTitle)
+            });
+            console.log("✅ Sauvegarde Cloud OK:", levelTitle);
+        } catch (e) {
+            console.error("❌ Erreur saveLevelToFirebase:", e);
+        }
+    };
+
+    // ==========================================
+    // 6. SURVEILLANCE DE L'ÉTAT AUTH
+    // ==========================================
+    
+    // 🔴 CORRECTION #6: onAuthStateChanged avec vérification complète
+    onAuthStateChanged(auth, async (user) => {
+        console.log("👤 État auth changé:", user ? `Connecté (${user.email})` : "Déconnecté");
+        
+        if (user) {
+            // Utilisateur connecté - charge ses données
+            try {
+                const userRef = doc(db, "users", user.uid);
+                const userSnap = await getDoc(userRef);
+                
+                if (userSnap.exists()) {
+                    const data = userSnap.data();
+                    window.isPro = data.isPro || false;
+                    window.userCompletedLevels = data.completedLevels || [];
+                    console.log("📊 Données utilisateur chargées:", {
+                        isPro: window.isPro,
+                        completed: window.userCompletedLevels.length
+                    });
+                }
+                
+                // Met à jour l'UI sans recharger la page
+                const nameDisplay = document.getElementById('display-username');
+                const userNameEl = document.getElementById('user-name');
+                
+                const displayName = user.displayName || user.email.split('@')[0];
+                if (nameDisplay) nameDisplay.innerText = displayName;
+                if (userNameEl) userNameEl.innerText = displayName;
+                
+            } catch (e) {
+                console.error("Erreur chargement données:", e);
+            }
+        } else {
+            // Utilisateur déconnecté
+            window.isPro = false;
+            window.userCompletedLevels = [];
+        }
+
+        // Rafraîchit l'affichage des cadenas dans tous les cas
+        if (typeof switchTab === 'function') {
+            switchTab(currentTabType || 'cours');
+        }
+    });
+
+    // ==========================================
+    // 7. EXPOSITION GLOBALE
+    // ==========================================
+    
+    // Rend les fonctions disponibles pour le HTML
+    window.firebaseAuth = auth;
+    window.firebaseDb = db;
+    
+    console.log("✅ Firebase Auth initialisé avec succès");
 </script>
 <script src="script.js"></script>
 <div id="success-screen" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.95); z-index:10000; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:20px;">
