@@ -5068,3 +5068,403 @@ function stopMicrophone() {
     
     console.log("Microphone arrêté");
 }
+// ==========================================
+// 🤖 INTEGRATION CLAUDE AI - MAESTRO COACH
+// ==========================================
+
+const AI_COACH = {
+    // Configuration
+    config: {
+        apiKey: localStorage.getItem('claude_api_key') || '',
+        model: 'claude-3-sonnet-20240229',
+        maxTokens: 1000,
+        enabled: localStorage.getItem('ai_enabled') !== 'false'
+    },
+    
+    // État de la conversation
+    state: {
+        isOpen: false,
+        messages: [],
+        isTyping: false,
+        context: {
+            currentLevel: null,
+            lastSession: null,
+            userProfile: null
+        }
+    },
+
+    // Initialisation
+    init() {
+        this.loadMessages();
+        this.updateContext();
+        console.log('🤖 Maestro AI initialisé');
+    },
+
+    // Met à jour le contexte avec les données utilisateur
+    updateContext() {
+        const currentP = profiles.find(p => p.name === currentProfileName) || profiles[0];
+        const sessions = currentP?.stats?.sessions || [];
+        
+        this.state.context = {
+            currentLevel: currentLevelTitle,
+            lastSession: sessions[0] || null,
+            userProfile: {
+                name: currentP?.name || 'Invité',
+                role: currentP?.role || 'enfant',
+                completed: currentP?.completed || [],
+                totalSessions: sessions.length,
+                avgAccuracy: sessions.length > 0 
+                    ? Math.round(sessions.reduce((a, b) => a + (b.accuracy || 0), 0) / sessions.length)
+                    : 0
+            }
+        };
+    },
+
+    // Appel API à Claude
+    async callClaude(userMessage, systemPrompt = null) {
+        if (!this.config.apiKey) {
+            return this.getOfflineResponse(userMessage);
+        }
+
+        const defaultSystem = `Tu es Maestro AI, un coach de piano patient, encourageant et pédagogue. 
+Tu aides les élèves à progresser sur PianoKid Evo Pro.
+Contexte actuel: ${JSON.stringify(this.state.context)}
+
+Règles:
+- Réponds en français, de façon concise (max 3-4 phrases)
+- Sois encourageant même quand l'élève fait des erreurs
+- Donne des conseils pratiques et actionnables
+- Utilise des emojis pour rendre la conversation vivante
+- Si l'élève demande un exercice, propose quelque chose adapté à son niveau`;
+
+        try {
+            const response = await fetch('https://api.anthropic.com/v1/messages', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': this.config.apiKey,
+                    'anthropic-version': '2023-06-01'
+                },
+                body: JSON.stringify({
+                    model: this.config.model,
+                    max_tokens: this.config.maxTokens,
+                    system: systemPrompt || defaultSystem,
+                    messages: [
+                        ...this.state.messages.slice(-5), // Garde l'historique récent
+                        { role: 'user', content: userMessage }
+                    ]
+                })
+            });
+
+            if (!response.ok) throw new Error('API Error');
+            
+            const data = await response.json();
+            return data.content[0].text;
+            
+        } catch (error) {
+            console.error('Erreur Claude API:', error);
+            return this.getOfflineResponse(userMessage);
+        }
+    },
+
+    // Réponses hors-ligne (fallback)
+    getOfflineResponse(message) {
+        const lowerMsg = message.toLowerCase();
+        const { userProfile, lastSession } = this.state.context;
+        
+        // Réponses prédéfinies intelligentes
+        if (lowerMsg.includes('bonjour') || lowerMsg.includes('salut')) {
+            return `Bonjour ${userProfile.name}! 👋 Prêt(e) à faire de la musique aujourd'hui ?`;
+        }
+        
+        if (lowerMsg.includes('conseil') || lowerMsg.includes('aide')) {
+            if (lastSession && lastSession.accuracy < 70) {
+                return `Je vois que ta dernière session était un peu difficile. 💪 Essaie de ralentir la vitesse et concentre-toi sur la précision plutôt que la vitesse. Veux-tu un exercice adapté ?`;
+            }
+            return `Conseil du jour : 🎯 Pratique 10 minutes chaque jour plutôt qu'une heure une fois par semaine. La régularité est la clé !`;
+        }
+        
+        if (lowerMsg.includes('exercice') || lowerMsg.includes('entraînement')) {
+            return `Voici un exercice sur mesure pour toi : 🎹\n\nJoue la gamme de DO majeur en montant et descendant, en t'assurant que chaque note sonne clairement. Répète 5 fois.`;
+        }
+        
+        if (lowerMsg.includes('analyse') || lowerMsg.includes('performance')) {
+            if (!lastSession) {
+                return `Tu n'as pas encore de session enregistrée. 🎵 Joue un niveau et je pourrai analyser ta performance !`;
+            }
+            const grade = lastSession.accuracy >= 90 ? 'excellente' : lastSession.accuracy >= 70 ? 'bonne' : 'à améliorer';
+            return `Ta dernière performance était ${grade}! 🎯\nPrécision: ${lastSession.accuracy}%\nTu peux viser ${Math.min(100, lastSession.accuracy + 10)}% la prochaine fois !`;
+        }
+        
+        if (lowerMsg.includes('théorie') || lowerMsg.includes('solfège')) {
+            return `Petite leçon rapide : 🎼\nLes notes sur les lignes du solfège se lisent MI-SOL-SI-RÉ-FA (de bas en haut). Un moyen mnémotechnique : "Maman Souhaite Bien Rester Femme" !`;
+        }
+        
+        if (lowerMsg.includes('doigté') || lowerMsg.includes('main')) {
+            return `Pour le doigté : 🖐️\n- Pouce = 1\n- Index = 2\n- Majeur = 3\n- Annulaire = 4\n- Auriculaire = 5\n\nGarde tes doigts arrondis comme si tu tenais une balle !`;
+        }
+        
+        // Réponse par défaut
+        return `Intéressant ! 🤔 Pour mieux t'aider, peux-tu me dire :\n- Ton niveau (débutant/intermédiaire/avancé) ?\n- Ce qui te pose problème en ce moment ?`;
+    },
+
+    // Envoie un message
+    async sendMessage(text) {
+        if (!text.trim()) return;
+        
+        // Ajoute le message utilisateur
+        this.addMessage('user', text);
+        
+        // Affiche l'indicateur de frappe
+        this.showTyping();
+        
+        // Appelle Claude
+        const response = await this.callClaude(text);
+        
+        // Cache l'indicateur et affiche la réponse
+        this.hideTyping();
+        this.addMessage('assistant', response);
+        
+        // Sauvegarde
+        this.saveMessages();
+    },
+
+    // Ajoute un message à l'interface
+    addMessage(role, text) {
+        const container = document.getElementById('ai-messages');
+        if (!container) return;
+        
+        const msgDiv = document.createElement('div');
+        msgDiv.className = `ai-message ${role}`;
+        msgDiv.textContent = text;
+        container.appendChild(msgDiv);
+        
+        // Scroll vers le bas
+        container.scrollTop = container.scrollHeight;
+        
+        // Ajoute à l'historique
+        this.state.messages.push({ role, content: text });
+    },
+
+    // Affiche l'indicateur de frappe
+    showTyping() {
+        const container = document.getElementById('ai-messages');
+        if (!container) return;
+        
+        const typingDiv = document.createElement('div');
+        typingDiv.id = 'ai-typing-indicator';
+        typingDiv.className = 'ai-typing';
+        typingDiv.innerHTML = '<span></span><span></span><span></span>';
+        container.appendChild(typingDiv);
+        container.scrollTop = container.scrollHeight;
+    },
+
+    // Cache l'indicateur de frappe
+    hideTyping() {
+        const indicator = document.getElementById('ai-typing-indicator');
+        if (indicator) indicator.remove();
+    },
+
+    // Sauvegarde les messages
+    saveMessages() {
+        localStorage.setItem('ai_messages', JSON.stringify(this.state.messages.slice(-20)));
+    },
+
+    // Charge les messages
+    loadMessages() {
+        const saved = localStorage.getItem('ai_messages');
+        if (saved) {
+            this.state.messages = JSON.parse(saved);
+            // Réaffiche les messages
+            const container = document.getElementById('ai-messages');
+            if (container) {
+                container.innerHTML = '';
+                this.state.messages.forEach(msg => {
+                    this.addMessage(msg.role, msg.content);
+                });
+            }
+        }
+    },
+
+    // Actions rapides
+    async quickAction(action) {
+        this.updateContext();
+        
+        switch(action) {
+            case 'analyze':
+                await this.sendMessage('Analyse ma dernière session de piano');
+                break;
+            case 'tips':
+                await this.sendMessage('Donne-moi 3 conseils pour progresser rapidement');
+                break;
+            case 'exercise':
+                await this.sendMessage('Propose-moi un exercice adapté à mon niveau');
+                break;
+        }
+    },
+
+    // Analyse une session de jeu spécifique
+    async analyzeGameSession(sessionData) {
+        const prompt = `Analyse cette session de piano en détail et donne des conseils personnalisés:
+        
+Niveau: ${sessionData.level}
+Précision: ${sessionData.accuracy}%
+Rythme: décalage moyen de ${sessionData.timing}ms
+Notes jouées: ${sessionData.notesHit}
+Erreurs: ${sessionData.notesMissed}
+Série max: ${sessionData.maxStreak}
+
+Donne:
+1. Une évaluation globale (1 phrase)
+2. Le point fort (1 phrase)
+3. Ce qui doit être amélioré (1 phrase)
+4. Un exercice spécifique pour s'améliorer`;
+
+        return await this.callClaude(prompt, `Tu es un expert en pédagogie musicale. Sois précis et encourageant.`);
+    }
+};
+
+// ==========================================
+// FONCTIONS INTERFACE AI
+// ==========================================
+
+function toggleAIPanel() {
+    const panel = document.getElementById('ai-coach-panel');
+    const toggle = document.getElementById('ai-toggle');
+    
+    if (!panel) return;
+    
+    AI_COACH.state.isOpen = !AI_COACH.state.isOpen;
+    
+    if (AI_COACH.state.isOpen) {
+        panel.style.display = 'flex';
+        if (toggle) toggle.classList.add('hidden');
+        AI_COACH.updateContext();
+        
+        // Focus sur l'input
+        setTimeout(() => {
+            const input = document.getElementById('ai-input');
+            if (input) input.focus();
+        }, 100);
+    } else {
+        panel.style.display = 'none';
+        if (toggle) toggle.classList.remove('hidden');
+    }
+}
+
+function sendAIMessage() {
+    const input = document.getElementById('ai-input');
+    if (!input) return;
+    
+    const text = input.value.trim();
+    if (!text) return;
+    
+    input.value = '';
+    AI_COACH.sendMessage(text);
+}
+
+function askAI(action) {
+    AI_COACH.quickAction(action);
+}
+
+// Analyse la session en cours de jeu
+async function analyzeCurrentGame() {
+    if (!currentSession || !currentSession.startTime) {
+        alert('Commencez à jouer d\'abord ! 🎹');
+        return;
+    }
+    
+    const sessionData = {
+        level: currentLevelTitle,
+        accuracy: currentSession.left.accuracy.length > 0 
+            ? Math.round((currentSession.left.accuracy.reduce((a,b)=>a+b,0) + currentSession.right.accuracy.reduce((a,b)=>a+b,0)) / (currentSession.left.accuracy.length + currentSession.right.accuracy.length))
+            : 0,
+        timing: Math.round((currentSession.left.timing.reduce((a,b)=>a+b,0) + currentSession.right.timing.reduce((a,b)=>a+b,0)) / (currentSession.left.timing.length + currentSession.right.timing.length)) || 0,
+        notesHit: currentSession.left.notesHit + currentSession.right.notesHit,
+        notesMissed: currentSession.notesMissed,
+        maxStreak: currentSession.maxStreak
+    };
+    
+    // Ouvre le panel AI
+    toggleAIPanel();
+    
+    // Affiche un message d'attente
+    const container = document.getElementById('ai-messages');
+    if (container) {
+        container.innerHTML += `
+            <div class="ai-message user">Analyse ma partie actuelle 🎮</div>
+            <div class="ai-typing" id="temp-typing"><span></span><span></span><span></span></div>
+        `;
+        container.scrollTop = container.scrollHeight;
+    }
+    
+    // Appelle l'analyse
+    const analysis = await AI_COACH.analyzeGameSession(sessionData);
+    
+    // Supprime l'indicateur et affiche la réponse
+    const tempTyping = document.getElementById('temp-typing');
+    if (tempTyping) tempTyping.remove();
+    
+    AI_COACH.addMessage('assistant', analysis);
+}
+
+// Analyse après une session terminée
+async function analyzeSessionWithAI() {
+    const currentP = profiles.find(p => p.name === currentProfileName);
+    const sessions = currentP?.stats?.sessions || [];
+    const lastSession = sessions[0];
+    
+    if (!lastSession) {
+        alert('Aucune session à analyser !');
+        return;
+    }
+    
+    toggleAIPanel();
+    
+    const container = document.getElementById('ai-messages');
+    if (container) {
+        container.innerHTML += `
+            <div class="ai-message user">Analyse ma dernière session : ${lastSession.level}</div>
+            <div class="ai-typing" id="temp-typing"><span></span><span></span><span></span></div>
+        `;
+        container.scrollTop = container.scrollHeight;
+    }
+    
+    const analysis = await AI_COACH.analyzeGameSession({
+        level: lastSession.level,
+        accuracy: lastSession.accuracy,
+        timing: lastSession.timing,
+        notesHit: lastSession.totalNotes - (lastSession.notesMissed || 0),
+        notesMissed: lastSession.notesMissed || 0,
+        maxStreak: lastSession.streak
+    });
+    
+    const tempTyping = document.getElementById('temp-typing');
+    if (tempTyping) tempTyping.remove();
+    
+    AI_COACH.addMessage('assistant', analysis);
+}
+
+// Configuration AI
+function showAISettings() {
+    const apiKey = prompt('Entrez votre clé API Claude (laissez vide pour mode hors-ligne):', AI_COACH.config.apiKey);
+    if (apiKey !== null) {
+        AI_COACH.config.apiKey = apiKey;
+        localStorage.setItem('claude_api_key', apiKey);
+        alert(apiKey ? 'Clé API sauvegardée ! ✅' : 'Mode hors-ligne activé');
+    }
+}
+
+// Initialisation au chargement
+document.addEventListener('DOMContentLoaded', () => {
+    AI_COACH.init();
+});
+
+// Exports globaux
+window.toggleAIPanel = toggleAIPanel;
+window.sendAIMessage = sendAIMessage;
+window.askAI = askAI;
+window.analyzeCurrentGame = analyzeCurrentGame;
+window.analyzeSessionWithAI = analyzeSessionWithAI;
+window.showAISettings = showAISettings;
+window.AI_COACH = AI_COACH;
